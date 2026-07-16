@@ -70,7 +70,7 @@ class HistoricalDataCollector:
             raise
 
 
-    def produce_to_kafka(self, symbol: str , period: str = "1y")-> Optional[pd.DataFrame]:
+    def fetch_historical_data(self, symbol: str , period: str = "1y")-> Optional[pd.DataFrame]:
         try:
             self.logger.info(f"Fetching historical data for ticker symbol {symbol}")
             yf_ticker = yf.Ticker(symbol)
@@ -79,25 +79,75 @@ class HistoricalDataCollector:
             df = yf_ticker.history(period = period)
 
             df.reset_index(inplace = True)
-            print(df)
+            #maybe we change it in the production environment
+            df.rename(
+                columns={
+                    'Date': 'date',
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                }, inplace=True
+            )
+
+            df['date'] = df['date'].dt.strftime("%Y-%m-%d")
+            df['symbol'] = symbol
+            df = df[['date','open', 'high', 'low', 'close', 'volume' ]]
+
+            self.logger.info(f"Successfully fetched {len(df)} days of data for stock {symbol}")
+
+            return df
 
         except Exception as e:
             self.logger.error(f"Failed to fetch historical data for symbol {symbol} {e}")
             return None
 
-        pass
+        
 
 
 
-    def fetch_historical_data(self, symbol: str, period: str = "1y") -> Optional[pd.DataFrame]:
-        try:
-            yf_ticker = yf.Ticker(symbol)
-            df = yf_ticker.history(period=period)
-            df.reset_index(inplace=True)
-            return df
-        except Exception as e:
-            self.logger.error(f"Failed to fetch historical data for symbol {symbol}: {e}")
-            return None
+    def produce_to_kafka(self, df: pd.DataFrame, symbol: str):
+        #we will use timestamp to create a batch id
+        batch_id =  datetime.now().strftime("%Y%m%d%H%M%S")
+        df["batch_id"] = batch_id
+        records = df.to_dict(orient = "records")
+
+        successfull_records = 0
+        failed_records = 0
+
+        for record in records:
+            try:
+                data = json.dumps(record)
+                self.producer.produce()
+
+                self.producer.produce(
+                    topic = self.topic,
+                    key = symbol,
+                    value = data,
+                    callback = self.delivery.report
+                )
+
+                self.producer.poll(1)
+
+                successfull_records += 1
+
+            except Exception as e:
+                self.logger.error(f"Failed to produce message for stock symbol {symbol} {e}")
+
+
+        self.producer.flush()
+        self.logger.info(f"Successfully produced {successfull_records} records for stock {symbol} and failed {failed_records}")
+
+
+    def delivery_report(self, err, msg):
+        if err is not None:
+            self.logger.error(f"Delivery failed for message {msg}")
+        else:
+            self.logger.info(f"Message delivered successfully to topic {msg.topic} [{msg.partition()}]")
+
+
+        
 
 
 
