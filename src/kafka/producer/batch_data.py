@@ -8,6 +8,7 @@ import yfinance as yf
 from confluent_kafka import Producer
 from dotenv import load_dotenv
 from typing import Optional
+from pathlib import Path
 
 #loading environment variables
 load_dotenv()
@@ -21,11 +22,15 @@ logging.basicConfig(
 
 )
 
+kite_api_key = os.environ["KITE_API_KEY"]
+kite_api_secret = os.environ["KITE_API_SECRET"]
+kite_login_url = os.environ["KITE_LOGIN_URL"]
+
 logger = logging.getLogger(__name__)
 
 #Kafka variables
 
-KAFKA_BOOTSTRAP_SERVERS = os.getenv('KAFKA_BOOTSTRAP_SERVERS')
+KAFKA_BOOTSTRAP_SERVERS = "localhost:29092"
 KAFKA_TOPIC_BATCH = os.getenv('KAFKA_TOPIC_BATCH')
 
 #just sample stocks. We will have to develop a program to identify which stocks we want the data of
@@ -93,7 +98,7 @@ class HistoricalDataCollector:
 
             df['date'] = df['date'].dt.strftime("%Y-%m-%d")
             df['symbol'] = symbol
-            df = df[['date','open', 'high', 'low', 'close', 'volume' ]]
+            df = df[['date', 'symbol' ,'open', 'high', 'low', 'close', 'volume' ]]
 
             self.logger.info(f"Successfully fetched {len(df)} days of data for stock {symbol}")
 
@@ -101,16 +106,15 @@ class HistoricalDataCollector:
 
         except Exception as e:
             self.logger.error(f"Failed to fetch historical data for symbol {symbol} {e}")
-            return None
-
-        
+            return None      
 
 
 
     def produce_to_kafka(self, df: pd.DataFrame, symbol: str):
         #we will use timestamp to create a batch id
-        batch_id =  datetime.now().strftime("%Y%m%d%H%M%S")
+        batch_id =  str(datetime.now().strftime("%Y%m%d%H%M%S"))
         df["batch_id"] = batch_id
+        df["batch_date"] = datetime.now().strftime("%Y-%m-%d")
         records = df.to_dict(orient = "records")
 
         successfull_records = 0
@@ -119,13 +123,11 @@ class HistoricalDataCollector:
         for record in records:
             try:
                 data = json.dumps(record)
-                self.producer.produce()
-
                 self.producer.produce(
                     topic = self.topic,
                     key = symbol,
                     value = data,
-                    callback = self.delivery.report
+                    callback = self.delivery_report
                 )
 
                 self.producer.poll(1)
@@ -147,10 +149,6 @@ class HistoricalDataCollector:
             self.logger.info(f"Message delivered successfully to topic {msg.topic} [{msg.partition()}]")
 
 
-        
-
-
-
 
     def collectHistoricalData(self, period):
         stocks = tickers
@@ -164,12 +162,12 @@ class HistoricalDataCollector:
                 #fetch historical data
                 df = self.fetch_historical_data(symbol, period)
 
-                """if df is not None and not df.empty:
-                    self.produce_to_kafka = (df, symbol)
+                if df is not None and not df.empty:
+                    self.produce_to_kafka(df, symbol)
                     successfull_tickers += 1
                 else:
                     self.logger.warning(f"No data returned for symbol {symbol}")
-                    failed_tickers += 1"""
+                    failed_tickers += 1
             except Exception as e:
                 self.logger.error(f"Error occured while processing the data of stock {symbol}: {e}")
 

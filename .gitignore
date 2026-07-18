@@ -1,1 +1,7 @@
 .env
+/venv/
+/src/test_utilities/
+/data/
+/src/airflow/logs/
+__pycache__/
+*.py[cod]

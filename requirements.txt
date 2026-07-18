@@ -13,3 +13,9 @@ loguru==0.7.2
 
 #yahoo finance
 yfinance
+
+#Kite zerodha
+kiteconnect
+
+#minio
+minio
